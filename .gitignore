@@ -45,3 +45,4 @@ tm*.log
 tm.out
 worker*.log
 /bin
+src/main/resources

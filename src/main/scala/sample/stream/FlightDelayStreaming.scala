@@ -1,49 +1,56 @@
 package sample.stream
 
+import scala.concurrent.ExecutionContext.Implicits.global
+
+
 import akka.NotUsed
+import org.slf4j.LoggerFactory
+import reactivemongo.api.collections.bson.BSONCollection
+import reactivemongo.api.commands.WriteResult
+import reactivemongo.bson.BSONDocument
 
 /**
 
-        FlowShape
-      Outlet[String]                  FlowShape[String, FlightEvent]         [FlightEvent, FlightDelayRecord]
- ╔══════════════════════╗                ╔══════════════════════╗                ╔══════════════════════╗
- ║                      ║                ║                      ║                ║                      ║
- ║                      ║                ║                      ║                ║                      ║
- ║                      ╠──┐          ┌──╣                      ╠──┐          ┌──╣                      ╠──┐
- ║  Source              │  │─────────▶│  │   csvToFlightEvent   │  │─────────▶│  │   filterAndConvert   │  │──┐
- ║     .fromIterator()  ╠──┘          └──╣                      ╠──┘          └──╣                      ╠──┘  │
- ║                      ║                ║                      ║                ║                      ║     │
- ║                      ║                ║                      ║                ║                      ║     │
- ║                      ║                ║                      ║                ║                      ║     │
- ╚══════════════════════╝                ╚══════════════════════╝                ╚══════════════════════╝     │
-                                                                                                              │
-                                                                                                              │
-                                                                                      UniformFanOutShape      │
-                                                 Inlet[Any]       [FlightDelayRecord, FlightDelayRecord]      │
-                                         ╔══════════════════════╗                ╔══════════════════════╗     │
-                                         ║                      ║                ║                      ║     │
-                                         ║                      ║                ║                      ║     │
-                                         ║                     ┌╩─┐           ┌──╣                      ╠──┐  │
-                                         ║      Sink.ignore    │  │◀──────────│  │      Broadcast       │  │◀─┘
-                                         ║                     └╦─┘           └──╣                      ╠──┘
-                                         ║                      ║                ║                      ║
-                                         ║                      ║                ║                      ║
-                                         ║                      ║                ║                      ║
-                                         ╚══════════════════════╝                ╚═════════╦──╦═════════╝
-                                                                                           │  │
-                                                                                           └──┘
-                                                       FlowShape                             │
-      Inlet[Any]         [FlightDelayRecord, (String, Int, Int)]                             │
-╔══════════════════════╗                ╔══════════════════════╗                             │
-║                      ║                ║                      ║                             │
-║                      ║                ║                      ║                             │
-║                      ╠──┐          ┌──╣                      ╠──┐                          │
-║     Sink.            │  │◀─────────│  │  averageCarrierDelay │  │◀─────────────────────────┘
-║       foreach(_)     ╠──┘          └──╣                      ╠──┘
-║                      ║                ║                      ║
-║                      ║                ║                      ║
-║                      ║                ║                      ║
-╚══════════════════════╝                ╚══════════════════════╝
+  * FlowShape
+  * Outlet[String]                  FlowShape[String, FlightEvent]         [FlightEvent, FlightDelayRecord]
+ *╔══════════════════════╗                ╔══════════════════════╗                ╔══════════════════════╗
+ *║                      ║                ║                      ║                ║                      ║
+ *║                      ║                ║                      ║                ║                      ║
+ *║                      ╠──┐          ┌──╣                      ╠──┐          ┌──╣                      ╠──┐
+ *║  Source              │  │─────────▶│  │   csvToFlightEvent   │  │─────────▶│  │   filterAndConvert   │  │──┐
+ *║     .fromIterator()  ╠──┘          └──╣                      ╠──┘          └──╣                      ╠──┘  │
+ *║                      ║                ║                      ║                ║                      ║     │
+ *║                      ║                ║                      ║                ║                      ║     │
+ *║                      ║                ║                      ║                ║                      ║     │
+ *╚══════════════════════╝                ╚══════════════════════╝                ╚══════════════════════╝     │
+                                                                                                              *│
+                                                                                                              *│
+                                                                                      *UniformFanOutShape      │
+                                                 *Inlet[Any]       [FlightDelayRecord, FlightDelayRecord]      │
+                                         *╔══════════════════════╗                ╔══════════════════════╗     │
+                                         *║                      ║                ║                      ║     │
+                                         *║                      ║                ║                      ║     │
+                                         *║                     ┌╩─┐           ┌──╣                      ╠──┐  │
+                                         *║      Sink.ignore    │  │◀──────────│  │      Broadcast       │  │◀─┘
+                                         *║                     └╦─┘           └──╣                      ╠──┘
+                                         *║                      ║                ║                      ║
+                                         *║                      ║                ║                      ║
+                                         *║                      ║                ║                      ║
+                                         *╚══════════════════════╝                ╚═════════╦──╦═════════╝
+                                                                                           *│  │
+                                                                                           *└──┘
+                                                       *FlowShape                             │
+      *Inlet[Any]         [FlightDelayRecord, (String, Int, Int)]                             │
+*╔══════════════════════╗                ╔══════════════════════╗                             │
+*║                      ║                ║                      ║                             │
+*║                      ║                ║                      ║                             │
+*║                      ╠──┐          ┌──╣                      ╠──┐                          │
+*║     Sink.            │  │◀─────────│  │  averageCarrierDelay │  │◀─────────────────────────┘
+*║       foreach(_)     ╠──┘          └──╣                      ╠──┘
+*║                      ║                ║                      ║
+*║                      ║                ║                      ║
+*║                      ║                ║                      ║
+*╚══════════════════════╝                ╚══════════════════════╝
   */
 
 object FlightDelayStreaming {
@@ -54,13 +61,27 @@ object FlightDelayStreaming {
   import scala.util.Try
   import scala.concurrent.ExecutionContext.Implicits._
 
+  val logger = LoggerFactory.getLogger("sample.stream.FlightDelayStreaming")
+
   // implicit actor system
   implicit val system = ActorSystem("Sys")
 
   // implicit actor materializer
   implicit val materializer = ActorMaterializer()
 
+  val driver1 = new reactivemongo.api.MongoDriver
+
+  val connection = driver1.connection(List("localhost"))
+
+  val db = connection.db("test")
+  val delayCollections = db.collection[BSONCollection]("delay")
+
   def main(args: Array[String]): Unit = {
+    //set up the logger
+    //Set up the mongo connection
+
+
+    logger.info("got connection to mongo")
 
     // @formatter:off
     val g = RunnableGraph.fromGraph(GraphDSL.create() {
@@ -74,16 +95,19 @@ object FlightDelayStreaming {
         val B: FlowShape[String, FlightEvent] = builder.add(csvToFlightEvent)
         val C: FlowShape[FlightEvent, FlightDelayRecord] = builder.add(filterAndConvert)
         val D: UniformFanOutShape[FlightDelayRecord, FlightDelayRecord] = builder.add(Broadcast[FlightDelayRecord](2))
-        val F: FlowShape[FlightDelayRecord, (String, Int, Int)] = builder.add(averageCarrierDelay)
+       // val F: FlowShape[FlightDelayRecord, (String, Int, Int)] = builder.add(averageCarrierDelay)
+        val F2: FlowShape[FlightDelayRecord, (String, Int, Int)] = builder.add(averageCarrierDelay)
 
         // Sinks
         val E: Inlet[Any] = builder.add(Sink.ignore).in
-        val G: Inlet[Any] = builder.add(Sink.foreach(averageSink)).in
+        //val G: Inlet[Any] = builder.add(Sink.foreach(averageSink)).in
+        val H: Inlet[Any] = builder.add(Sink.foreach(saveSink)).in
 
         // Graph
         A ~> B ~> C ~> D
                   E <~ D
-             G <~ F <~ D
+             //G <~ F <~ D
+            H <~ F2 <~ D
 
         ClosedShape
     })
@@ -93,10 +117,25 @@ object FlightDelayStreaming {
 
   }
 
+  def saveSink[A](a: A): Unit ={
+    a match {
+      case (a: String, b: Int, c: Int) => {
+        logger.info(s"save it")
+        val document = BSONDocument(
+          "airline" -> a,
+          "averageMins" -> Try(c / b).getOrElse(0),
+          "delayedFlights" -> b
+        )
+        delayCollections.insert(document)
+      }
+      case x => logger.info("no idea what " + x + "is!")
+    }
+  }
+
   def averageSink[A](a: A) {
     a match {
-      case (a: String, b: Int, c: Int) => println(s"Delays for carrier ${a}: ${Try(c / b).getOrElse(0)} average mins, ${b} delayed flights")
-      case x => println("no idea what " + x + "is!")
+      case (a: String, b: Int, c: Int) => logger.info(s"Delays for carrier ${a}: ${Try(c / b).getOrElse(0)} average mins, ${b} delayed flights")
+      case x => logger.info("no idea what " + x + "is!")
     }
   }
 
@@ -127,6 +166,9 @@ object FlightDelayStreaming {
           val totalMins = x._3 + Try(y.arrDelayMins.toInt).getOrElse(0)
           (y.uniqueCarrier, count, totalMins)
       }.mergeSubstreams
+
+
+
 }
 
 case class FlightEvent(
